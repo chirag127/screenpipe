@@ -26,6 +26,10 @@ jobs:
       # hide real compile errors.
       RUSTFLAGS: "-A warnings"
       AWS_LC_SYS_PREBUILT_NASM: "1"
+      # Single source of truth for ONNX Runtime version. Referenced by cache
+      # path, primary download, and safety-net verify. Bumping this bumps all
+      # three at once; the cache key auto-invalidates via hashFiles below.
+      ONNXRUNTIME_VERSION: "1.24.2"
 
     steps:
       - name: Checkout
@@ -80,39 +84,46 @@ jobs:
             apps/screenpipe-app-tauri/src-tauri/ffmpeg
             apps/screenpipe-app-tauri/src-tauri/openblas
             apps/screenpipe-app-tauri/src-tauri/OpenBLAS
-            apps/screenpipe-app-tauri/src-tauri/pre_build
-            apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-1.24.2
-          key: tauri-bins-win-v2-${{ hashFiles('apps/screenpipe-app-tauri/src-tauri/build.rs', 'apps/screenpipe-app-tauri/src-tauri/Cargo.toml', 'apps/screenpipe-app-tauri/src-tauri/tauri.windows.conf.json') }}
-          restore-keys: tauri-bins-win-v2-
+            apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-${{ env.ONNXRUNTIME_VERSION }}
+          key: tauri-bins-win-v3-${{ env.ONNXRUNTIME_VERSION }}-${{ hashFiles('apps/screenpipe-app-tauri/src-tauri/build.rs', 'apps/screenpipe-app-tauri/src-tauri/Cargo.toml', 'apps/screenpipe-app-tauri/src-tauri/tauri.windows.conf.json') }}
+          restore-keys: tauri-bins-win-v3-${{ env.ONNXRUNTIME_VERSION }}-
 
       # onnxruntime is referenced by tauri.windows.conf.json's bundle resources
       # (onnxruntime*\lib\onnxruntime.dll) but pre_build.js does NOT fetch it.
       # ci.yml has this same block — mirror it here or the bundle glob fails.
+      # UNCONDITIONAL: if cache-hit is true but restored tree is missing the
+      # dir (partial-prefix restore risk), we still get here; Test-Path skips
+      # the download when present. Matches ci.yml's shape.
       - name: Download ONNX Runtime (CPU) — required by bundle resources
-        if: steps.tauri-bins-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-win-x64-1.24.2.zip"
-          $zipFile = "onnxruntime-win-x64-1.24.2.zip"
-          $extractDir = "apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-1.24.2"
+          $version = "${{ env.ONNXRUNTIME_VERSION }}"
+          $extractDir = "apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-$version"
+          if (Test-Path "$extractDir/lib/onnxruntime.dll") {
+            Write-Host "ONNX Runtime already present at $extractDir (cache hit)."
+            exit 0
+          }
+          $url = "https://github.com/microsoft/onnxruntime/releases/download/v$version/onnxruntime-win-x64-$version.zip"
+          $zipFile = "onnxruntime-win-x64-$version.zip"
           Invoke-WebRequest -Uri $url -OutFile $zipFile
           if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
           7z x $zipFile -o"apps/screenpipe-app-tauri/src-tauri/" -y
           Remove-Item $zipFile
           Write-Host "ONNX Runtime extracted to $extractDir"
 
-      - name: Verify ONNX Runtime present (cache-hit safety net)
+      - name: Verify ONNX Runtime present (belt + braces)
         shell: pwsh
         run: |
-          $target = "apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-1.24.2/lib/onnxruntime.dll"
+          $version = "${{ env.ONNXRUNTIME_VERSION }}"
+          $target = "apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-$version/lib/onnxruntime.dll"
           if (-not (Test-Path $target)) {
-            Write-Host "cache-hit lied — onnxruntime.dll missing. Re-downloading."
-            $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-win-x64-1.24.2.zip"
+            Write-Host "onnxruntime.dll missing after download step — retrying once."
+            $url = "https://github.com/microsoft/onnxruntime/releases/download/v$version/onnxruntime-win-x64-$version.zip"
             Invoke-WebRequest -Uri $url -OutFile onnx.zip
             7z x onnx.zip -o"apps/screenpipe-app-tauri/src-tauri/" -y
             Remove-Item onnx.zip
           }
-          if (-not (Test-Path $target)) { throw "onnxruntime.dll still missing after re-download" }
+          if (-not (Test-Path $target)) { throw "onnxruntime.dll still missing after re-download at $target" }
           Write-Host "onnxruntime.dll present at $target"
 
       - name: Install JS deps
@@ -140,7 +151,7 @@ jobs:
         with:
           name: screenpipe-windows-${{ steps.version.outputs.version }}
           path: apps/screenpipe-app-tauri/src-tauri/target/release/bundle/**/*.{exe,msi}
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 90
           compression-level: 0
 
