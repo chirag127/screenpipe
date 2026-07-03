@@ -124,14 +124,41 @@ fn is_similar_words(words1: &[String], words2: &[String], threshold: f64) -> boo
 }
 
 /// Normalize text and split into words for comparison.
+///
+/// Called 51× per inserted audio chunk (dedup path in
+/// `has_similar_recent_transcription`) — once for the incoming transcription
+/// plus once for each of the last 50 recent rows fetched from the DB. The
+/// previous implementation allocated a full lowercased `String`, then a
+/// second `String` for the punctuation-stripped copy, then a `Vec<String>`
+/// with a fresh `String` per word. This version streams characters into a
+/// single reusable word buffer and only allocates the per-word `String`s
+/// that actually make it into the output — dropping the two intermediate
+/// `String` allocations entirely.
 fn normalize_to_words(s: &str) -> Vec<String> {
-    s.to_lowercase()
-        .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-        .collect::<String>()
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect()
+    // Rough guess: a whitespace boundary every ~6 chars on average English text.
+    let mut words: Vec<String> = Vec::with_capacity(s.len() / 6 + 1);
+    let mut current = String::new();
+    for c in s.chars() {
+        if c.is_whitespace() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+        } else if c.is_alphanumeric() {
+            // Match the previous lowercase-then-filter behavior: lowercase
+            // every char before deciding to keep it. `to_lowercase()` on a
+            // single char yields an iterator (a few chars for some scripts,
+            // e.g. German ß → "ss").
+            for lc in c.to_lowercase() {
+                current.push(lc);
+            }
+        }
+        // Any other char (punctuation, symbols) is dropped, exactly like the
+        // old `.filter(|c| c.is_alphanumeric() || c.is_whitespace())`.
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
 }
 
 #[cfg(test)]
@@ -386,5 +413,54 @@ mod tests {
             is_similar_transcription(s1, s2, 0.5),
             "60% similarity should pass 50% threshold"
         );
+    }
+
+    /// Reference impl matching the pre-optimization behavior, kept in tests
+    /// only so we can assert the streaming impl agrees on every input we
+    /// might see in a real transcription (unicode, punctuation-runs, empty
+    /// segments, multi-char lowercasing like German ß).
+    fn normalize_to_words_reference(s: &str) -> Vec<String> {
+        s.to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect::<String>()
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_normalize_matches_reference() {
+        // Every input the streaming normalizer might see in a real dedup pass
+        // must yield the same Vec<String> as the old collect-into-String path.
+        let inputs = [
+            "",
+            "   ",
+            "hello",
+            "Hello, World!",
+            "  Hello,   World!  ",
+            "It was the first computer with beautiful typography.",
+            "So like",
+            "word1 word2\tword3\nword4",
+            // Unicode: German ß lowercases to two chars ("ss") — the tricky
+            // case that motivated the per-char to_lowercase() loop.
+            "Straße MASSE",
+            // Turkish dotted/dotless i, French accents — full lowercase pass.
+            "İSTANBUL café RÉSUMÉ",
+            // Punctuation-only tokens must vanish, exactly like before.
+            "hello --- world !!! ???",
+            // Digits pass through (alphanumeric).
+            "test 123 abc456",
+            // Emoji-adjacent text — emoji is neither alphanumeric nor
+            // whitespace, so both impls drop it.
+            "hey 👋 there",
+        ];
+        for input in inputs {
+            assert_eq!(
+                normalize_to_words(input),
+                normalize_to_words_reference(input),
+                "streaming normalizer diverged from reference for {input:?}"
+            );
+        }
     }
 }
