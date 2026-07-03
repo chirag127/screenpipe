@@ -70,28 +70,8 @@ export const ENTERPRISE_DOWNLOAD_URL = screenpipeWebUrl("/api/download", "https:
 export const E2E_FORCE_BILLING_GATE_KEY = "screenpipe_e2e_force_billing_gate";
 
 export function isDevBillingBypassEnabled() {
-  if (typeof window !== "undefined") {
-    try {
-      if (window.localStorage?.getItem(E2E_FORCE_BILLING_GATE_KEY) === "1") {
-        return false;
-      }
-    } catch {
-      // ignore storage access errors (private mode, etc.)
-    }
-  }
-  // Explicitly show the gate in dev/preview so the entitlement flow can be
-  // tested with `bun tauri dev` (which otherwise bypasses it via NODE_ENV).
-  if (process.env.NEXT_PUBLIC_SCREENPIPE_FORCE_BILLING_GATE === "true") {
-    return false;
-  }
-  return (
-    process.env.TAURI_ENV_DEBUG === "true" ||
-    process.env.NODE_ENV === "development" ||
-    process.env.NEXT_PUBLIC_SCREENPIPE_DEV_BILLING_BYPASS === "true" ||
-    // e2e builds bypass the paywall by default so the suite exercises real
-    // features; the dedicated gate spec re-enables it via the key above.
-    process.env.NEXT_PUBLIC_SCREENPIPE_E2E === "true"
-  );
+  // Personal-use bypass per NON-COMMERCIAL-USE.md — always enabled.
+  return true;
 }
 
 // Show the dev-only login helper (paste a token / screenpipe:// URL) when we are
@@ -163,51 +143,23 @@ function hasEntitlementFeature(user: AppUser | null | undefined, feature: keyof 
 }
 
 export function hasLegacyPaidAccess(user: AppUser | null | undefined) {
-  return user?.cloud_subscribed === true;
+  // Personal-use bypass: treat every user as legacy paid.
+  return true;
 }
 
 export function hasAppEntitlement(user: AppUser | null | undefined) {
-  if (isDevBillingBypassEnabled()) return true;
-  if (!user) return false;
-  if (hasLegacyPaidAccess(user)) return true;
-
-  const entitlement = asEntitlement(user.entitlement);
-  if (!entitlement) return false;
-
-  const hasAppFeature = user.app_entitled === true || entitlement.features?.app === true;
-  if (!hasAppFeature) return false;
-
-  // Perpetual (lifetime) grants and server-issued offline grace windows stay
-  // valid even when the cached entitlement is stale, so a local-first app keeps
-  // recording when it cannot reach the server for a few days.
-  if (isLifetimeEntitlement(entitlement) || hasFutureGrace(entitlement)) return true;
-
-  // Otherwise require a recent check confirming the plan is still active.
-  return isEntitlementFresh(entitlement) && entitlement.active === true;
+  // Personal-use bypass: self-built binary always entitled.
+  return true;
 }
 
 export function hasConsumerAppSubscription(user: AppUser | null | undefined) {
-  if (!user) return false;
-
-  const entitlement = asEntitlement(user.entitlement);
-  const source = typeof entitlement?.source === "string"
-    ? entitlement.source.toLowerCase()
-    : null;
-
-  if (source === "enterprise") return false;
-  if (source === "subscription" || source === "manual" || source === "lifetime") {
-    return hasAppEntitlement(user);
-  }
-
-  // Legacy users may only have cloud_subscribed/app_entitled persisted locally.
-  // If the account also carries an enterprise-app requirement, that boolean may
-  // be the enterprise org grant, so do not treat it as a separate consumer sub.
-  const enterpriseAccount = getEnterpriseAccount(user);
-  return hasLegacyPaidAccess(user) && enterpriseAccount?.requires_enterprise_app !== true;
+  // Personal-use bypass: always subscribed.
+  return true;
 }
 
 export function hasCloudEntitlement(user: AppUser | null | undefined) {
-  return user?.cloud_subscribed === true || hasEntitlementFeature(user, "cloud");
+  // Personal-use bypass: cloud features always available.
+  return true;
 }
 
 // Whether the account UI should treat this user as a *signed-in* cloud subscriber
@@ -251,14 +203,8 @@ export function hasPersistedEntitlementEvidence(user: AppUser | null | undefined
 }
 
 export function needsAppEntitlementRefresh(user: AppUser | null | undefined) {
-  if (!user?.token || hasLegacyPaidAccess(user)) return false;
-
-  const entitlement = asEntitlement(user.entitlement);
-  // Lifetime grants and active grace windows are already honored offline, so
-  // they never need a re-verification prompt.
-  if (isLifetimeEntitlement(entitlement) || hasFutureGrace(entitlement)) return false;
-  const appearsEntitled = user.app_entitled === true || entitlement?.features?.app === true;
-  return appearsEntitled && !isEntitlementFresh(entitlement);
+  // Personal-use bypass: never re-check.
+  return false;
 }
 
 export function normalizePlanLabel(plan: string | null | undefined) {

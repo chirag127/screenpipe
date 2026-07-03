@@ -33,7 +33,6 @@ export function shouldShowModelUpsell(
   user: AppUser | null | undefined,
   flagEnabled: boolean,
 ): boolean {
-  if (!flagEnabled) return false;
-  if (hasPersistedEntitlementEvidence(user)) return false;
-  return true;
+  // Personal-use bypass: never nag with upsells.
+  return false;
 }
