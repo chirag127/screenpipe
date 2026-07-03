@@ -1,0 +1,175 @@
+name: Build Windows Installer
+
+# Personal-use Windows build per NON-COMMERCIAL-USE.md.
+# Standalone workflow (mirrors what ci.yml does for tests, minus test-run).
+# Produces v<VERSION><SUFFIX>-windows tag + artifact (also uploaded as GHA
+# artifact for resilience against Releases-API outages).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_suffix:
+        description: "Optional version suffix (e.g. -chirag)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # Silence upstream Rust warnings (deprecated rand APIs, dead_code from
+      # our personal-use bypass, unused_variables in upstream code). Does not
+      # hide real compile errors.
+      RUSTFLAGS: "-A warnings"
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Setup build env (LLVM + cmake + 7zip)
+        shell: pwsh
+        run: |
+          $clang = Get-Command clang -ErrorAction SilentlyContinue
+          if ($clang) {
+            "LIBCLANG_PATH=$((Split-Path $clang.Source -Parent))" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            choco install llvm -y --no-progress | Out-Null
+            $installed = (Get-Command clang -ErrorAction Stop).Source
+            "LIBCLANG_PATH=$((Split-Path $installed -Parent))" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+          choco install cmake 7zip -y --no-progress --ignore-package-exit-codes | Out-Null
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/screenpipe-app-tauri/src-tauri
+          cache-on-failure: true
+          prefix-key: v2-rust-win
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun + Next.js
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            apps/screenpipe-app-tauri/.next/cache
+          key: bun-next-${{ runner.os }}-${{ hashFiles('apps/screenpipe-app-tauri/bun.lock', 'apps/screenpipe-app-tauri/bun.lockb') }}
+          restore-keys: bun-next-${{ runner.os }}-
+
+      - name: Cache Tauri pre-build binaries (ffmpeg, OpenBLAS, onnxruntime)
+        id: tauri-bins-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/screenpipe-app-tauri/src-tauri/ffmpeg
+            apps/screenpipe-app-tauri/src-tauri/openblas
+            apps/screenpipe-app-tauri/src-tauri/OpenBLAS
+            apps/screenpipe-app-tauri/src-tauri/pre_build
+            apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-1.24.2
+          key: tauri-bins-win-v2-${{ hashFiles('apps/screenpipe-app-tauri/src-tauri/build.rs', 'apps/screenpipe-app-tauri/src-tauri/Cargo.toml', 'apps/screenpipe-app-tauri/src-tauri/tauri.windows.conf.json') }}
+          restore-keys: tauri-bins-win-v2-
+
+      # onnxruntime is referenced by tauri.windows.conf.json's bundle resources
+      # (onnxruntime*\lib\onnxruntime.dll) but pre_build.js does NOT fetch it.
+      # ci.yml has this same block — mirror it here or the bundle glob fails.
+      - name: Download ONNX Runtime (CPU) — required by bundle resources
+        if: steps.tauri-bins-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-win-x64-1.24.2.zip"
+          $zipFile = "onnxruntime-win-x64-1.24.2.zip"
+          $extractDir = "apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-1.24.2"
+          Invoke-WebRequest -Uri $url -OutFile $zipFile
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          7z x $zipFile -o"apps/screenpipe-app-tauri/src-tauri/" -y
+          Remove-Item $zipFile
+          Write-Host "ONNX Runtime extracted to $extractDir"
+
+      - name: Verify ONNX Runtime present (cache-hit safety net)
+        shell: pwsh
+        run: |
+          $target = "apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-1.24.2/lib/onnxruntime.dll"
+          if (-not (Test-Path $target)) {
+            Write-Host "cache-hit lied — onnxruntime.dll missing. Re-downloading."
+            $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-win-x64-1.24.2.zip"
+            Invoke-WebRequest -Uri $url -OutFile onnx.zip
+            7z x onnx.zip -o"apps/screenpipe-app-tauri/src-tauri/" -y
+            Remove-Item onnx.zip
+          }
+          if (-not (Test-Path $target)) { throw "onnxruntime.dll still missing after re-download" }
+          Write-Host "onnxruntime.dll present at $target"
+
+      - name: Install JS deps
+        working-directory: apps/screenpipe-app-tauri
+        run: bun install
+
+      - name: Build (Tauri)
+        working-directory: apps/screenpipe-app-tauri
+        shell: pwsh
+        run: bun run tauri build
+
+      - name: Get version
+        id: version
+        shell: pwsh
+        run: |
+          $cargo = Get-Content "apps/screenpipe-app-tauri/src-tauri/Cargo.toml" | Select-String '^version = '
+          $ver = ([regex]::Match($cargo.Line, '"(.+)"')).Groups[1].Value
+          "version=v$ver${{ inputs.version_suffix }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      # Always upload as GHA artifact FIRST — survives Releases-API 503s.
+      # Fetch via `gh run download <run-id> -R chirag127/screenpipe -n <name>`.
+      - name: Upload artifact (always, survives Releases-API outages)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenpipe-windows-${{ steps.version.outputs.version }}
+          path: apps/screenpipe-app-tauri/src-tauri/target/release/bundle/**/*.{exe,msi}
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0
+
+      # Best-effort release publish. Failure here does NOT fail the run because
+      # the artifact is already uploaded above. Run #9 failed here on 503.
+      - name: Create release + upload artifacts
+        id: release
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}-windows
+          name: "Screenpipe ${{ steps.version.outputs.version }} (Windows)"
+          body: |
+            Personal Windows build from chirag127/screenpipe.
+            Commit: ${{ github.sha }}
+            License: personal, non-commercial use only. See NON-COMMERCIAL-USE.md.
+          files: apps/screenpipe-app-tauri/src-tauri/target/release/bundle/**/*.{exe,msi}
+          draft: false
+          prerelease: true
+
+      - name: Report where to fetch the build
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host ""
+          Write-Host "=== Build artifact ==="
+          if ("${{ steps.release.outcome }}" -eq "success") {
+            Write-Host "Release: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.version }}-windows"
+          } else {
+            Write-Host "Release step failed or skipped. Artifact still available:"
+            Write-Host "  gh run download ${{ github.run_id }} -R ${{ github.repository }} -n screenpipe-windows-${{ steps.version.outputs.version }}"
+          }
