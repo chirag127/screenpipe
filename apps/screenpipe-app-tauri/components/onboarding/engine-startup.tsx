@@ -145,6 +145,13 @@ export default function EngineStartup({
 
   // Boot phase — polled via Tauri IPC, available before HTTP server binds
   const [bootPhase, setBootPhase] = useState<BootPhaseSnapshot | null>(null);
+  // DLP signature: the engine reports boot phase "ready" (it's up on 3030) but
+  // every HTTP /health poll from this webview fails. On corp networks a DLP
+  // agent commonly intercepts localhost, so the window can't reach an engine
+  // that is in fact running. Track consecutive HTTP failures; flag once we
+  // have a "ready" phase and enough failures to rule out a slow start (#4850).
+  const healthFailStreakRef = useRef(0);
+  const [dlpLikely, setDlpLikely] = useState(false);
 
   const hasAdvancedRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
@@ -237,17 +244,30 @@ export default function EngineStartup({
           if (audioOk) setAudioReady(true);
           if (visionOk) setVisionReady(true);
 
+          healthFailStreakRef.current = 0;
           setState("running");
         }
       } catch {
-        // not ready yet
+        // Reachability failure (timeout / network error), not a not-ready
+        // response. If the engine reports it's up ("ready") but this webview
+        // still can't reach /health after several tries, that's the DLP
+        // localhost-interception signature — flag it so the stuck UI can
+        // explain it instead of blaming the engine (#4850).
+        healthFailStreakRef.current += 1;
+        if (
+          bootPhase?.phase === "ready" &&
+          healthFailStreakRef.current >= 6 &&
+          !dlpLikely
+        ) {
+          setDlpLikely(true);
+        }
       }
     };
 
     const interval = setInterval(poll, 500);
     poll();
     return () => clearInterval(interval);
-  }, [state]);
+  }, [state, bootPhase?.phase, dlpLikely]);
 
   // Poll boot phase via Tauri IPC — available before HTTP server binds.
   // Crucial on large-db migrations where /health is unreachable for minutes.
@@ -1173,7 +1193,26 @@ if the input is sparse, just describe what little you have warmly. don't apologi
               {/* When we know exactly why startup failed (e.g. TCC permission
                   denied) show the real reason instead of a generic
                   "send-logs" prompt. */}
-              {spawnErrorKind === "permission" ? (
+              {dlpLikely ? (
+                <>
+                  <p className="font-mono text-sm text-foreground text-center">
+                    screenpipe is running, but this window can&apos;t reach it.
+                  </p>
+                  <p className="font-mono text-[11px] text-muted-foreground text-center leading-relaxed">
+                    your network or security software may be blocking this app
+                    from reaching localhost:3030. recording is active in the
+                    background — you can continue.
+                  </p>
+                  <button
+                    onClick={() =>
+                      openUrl("https://docs.screenpi.pe/troubleshooting")
+                    }
+                    className="font-mono text-[10px] text-muted-foreground hover:text-foreground transition-colors underline underline-offset-4"
+                  >
+                    troubleshooting guide ↗
+                  </button>
+                </>
+              ) : spawnErrorKind === "permission" ? (
                 <>
                   <p className="font-mono text-sm text-foreground text-center">
                     screen recording permission is required.
