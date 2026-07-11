@@ -170,6 +170,11 @@ pub(crate) struct SearchQuery {
     /// for shedding the repeated absolute `content.file_path`). Omit for all.
     #[serde(default)]
     fields: Option<String>,
+    /// PERSONAL-FORK: filter OCR results by capture method. `"accessibility"` =
+    /// OS-native a11y tree; `"ocr"` = optical-character-recognition fallback.
+    /// Omit for all sources. Mirrors the `source` filter on `/elements`.
+    #[serde(default)]
+    text_source: Option<String>,
 }
 
 #[derive(OaSchema, Deserialize)]
@@ -554,6 +559,9 @@ pub(crate) fn compute_search_cache_key(query: &SearchQuery) -> u64 {
     // request without it must not be served a related-bearing cache entry
     // (and vice-versa).
     query.include_related.hash(&mut hasher);
+    // PERSONAL-FORK: text_source changes the OCR result set, so a filtered
+    // response must not be served from an unfiltered cache entry (or vice-versa).
+    query.text_source.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -665,6 +673,7 @@ pub(crate) async fn search(
                 query.machine_id.as_deref(),
                 query.on_screen,
                 tags,
+                query.text_source.as_deref(),
             ),
             state.db.count_search_results_with_tags(
                 query_str,
@@ -682,6 +691,7 @@ pub(crate) async fn search(
                 query.speaker_name.as_deref(),
                 query.on_screen,
                 tags,
+                query.text_source.as_deref(),
             ),
         ),
     )

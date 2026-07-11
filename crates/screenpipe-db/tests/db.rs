@@ -139,6 +139,7 @@ mod tests {
                 None,
                 None,
                 tags,
+                None,
             )
             .await
             .unwrap()
@@ -207,6 +208,7 @@ mod tests {
                 None,
                 None,
                 &["project:atlas".to_string()],
+                None,
             )
             .await
             .unwrap();
@@ -239,6 +241,7 @@ mod tests {
             None,
             None,
             tags,
+            None,
         )
         .await
         .unwrap()
@@ -345,6 +348,7 @@ mod tests {
                 None,
                 None,
                 &["person:ada".to_string()],
+                None,
             )
             .await
             .unwrap();
@@ -450,6 +454,7 @@ mod tests {
                 None,
                 None,
                 &["project:atlas".to_string()],
+                None,
             )
             .await
             .unwrap();
@@ -478,6 +483,7 @@ mod tests {
                 None,
                 None,
                 &["project:atlas".to_string()],
+                None,
             )
             .await
             .unwrap();

@@ -249,6 +249,7 @@ async fn bench_tag_filter_scaling() {
                     None,
                     None,
                     &tags,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -277,6 +278,7 @@ async fn bench_tag_filter_scaling() {
                         None,
                         None,
                         &tags,
+                        None,
                     )
                     .await
                     .unwrap();
@@ -305,6 +307,7 @@ async fn bench_tag_filter_scaling() {
             .count_search_results_with_tags(
                 "", ct, None, None, None, None, None, None, None, None, None, None, None, None,
                 &ada,
+                None,
             )
             .await
             .unwrap();

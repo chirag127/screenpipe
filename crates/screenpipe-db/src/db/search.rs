@@ -49,6 +49,7 @@ impl DatabaseManager {
             machine_id,
             on_screen,
             &[],
+            None,
         )
         .await
     }
@@ -88,6 +89,9 @@ impl DatabaseManager {
         // when None, preserving current behavior for unaware callers.
         on_screen: Option<bool>,
         tags: &[String],
+        // PERSONAL-FORK: OCR capture-method filter, threaded to `search_ocr`.
+        // `None` = no filter. Only the OCR/All legs use it.
+        text_source: Option<&str>,
     ) -> Result<Vec<SearchResult>, sqlx::Error> {
         let mut results = Vec::new();
 
@@ -135,6 +139,7 @@ impl DatabaseManager {
                                 device_name,
                                 machine_id,
                                 tags,
+                                text_source,
                             ),
                             self.search_audio(
                                 query,
@@ -208,6 +213,7 @@ impl DatabaseManager {
                                 device_name,
                                 machine_id,
                                 tags,
+                                text_source,
                             ),
                             async {
                                 if !tags.is_empty() {
@@ -269,6 +275,7 @@ impl DatabaseManager {
                         device_name,
                         machine_id,
                         tags,
+                        text_source,
                     )
                     .await?;
                 results.extend(ocr_results.into_iter().map(SearchResult::OCR));
@@ -421,6 +428,11 @@ impl DatabaseManager {
         // Match only frames carrying ALL of these tags (vision_tags join).
         // Empty slice = no tag filter. See `search_with_tags`.
         tags: &[String],
+        // PERSONAL-FORK: restrict OCR hits to a capture method —
+        // `"accessibility"` (OS a11y tree) or `"ocr"` (pixel OCR fallback).
+        // `None` = no filter (guarded by `?13 IS NULL`), so default behaviour
+        // is unchanged for callers that don't pass it.
+        text_source: Option<&str>,
     ) -> Result<Vec<OCRResult>, sqlx::Error> {
         // Acquire a heavy-read permit (max 2 concurrent). OCR searches can
         // return massive text blobs and hold connections for seconds, starving
@@ -510,6 +522,7 @@ impl DatabaseManager {
                 GROUP BY vt.vision_id
                 HAVING COUNT(DISTINCT t.name) = json_array_length(?12)
             ))
+            AND (?13 IS NULL OR frames.text_source = ?13)
         GROUP BY frames.id
         ORDER BY frames.timestamp DESC
         LIMIT ?10 OFFSET ?11
@@ -546,6 +559,7 @@ impl DatabaseManager {
             .bind(limit)
             .bind(offset)
             .bind(&tags_json)
+            .bind(text_source)
             .fetch_all(&self.pool)
             .await?;
 
@@ -1309,6 +1323,7 @@ impl DatabaseManager {
             speaker_name,
             on_screen,
             &[],
+            None,
         )
         .await
     }
@@ -1335,6 +1350,10 @@ impl DatabaseManager {
         // breaks (`total` no longer matches the visible page). Issue #2436.
         on_screen: Option<bool>,
         tags: &[String],
+        // PERSONAL-FORK: OCR capture-method filter — mirror of the one in
+        // `search_with_tags` so the paginated `total` stays correct when set.
+        // `None` = no filter; only the OCR/All count legs use it.
+        text_source: Option<&str>,
     ) -> Result<usize, sqlx::Error> {
         // if focused or browser_url is present, we run only on OCR
         if focused.is_some() || browser_url.is_some() {
@@ -1399,6 +1418,7 @@ impl DatabaseManager {
                             speaker_name,
                             None,
                             tags,
+                            None,
                         ));
                         if !tags.is_empty() {
                             // accessibility frames carry no tags → audio only
@@ -1437,6 +1457,7 @@ impl DatabaseManager {
                 None,
                 None,
                 tags,
+                text_source,
             ));
 
             if app_name.is_none() && window_name.is_none() {
@@ -1456,6 +1477,7 @@ impl DatabaseManager {
                     speaker_name,
                     None,
                     tags,
+                    None, // audio has no text_source
                 ));
 
                 let (frames_count, audio_count) = tokio::try_join!(frames_future, audio_future)?;
@@ -1530,6 +1552,7 @@ impl DatabaseManager {
                            GROUP BY vt.vision_id
                            HAVING COUNT(DISTINCT t.name) = json_array_length(?8)
                        ))
+                       AND (?9 IS NULL OR frames.text_source = ?9)
                        {a11y_filter}"#,
                 fts_join = if has_fts {
                     "JOIN frames_fts ON frames.id = frames_fts.rowid"
@@ -1683,6 +1706,7 @@ impl DatabaseManager {
                     .bind(frame_name)
                     .bind(focused)
                     .bind(&tags_json)
+                    .bind(text_source)
                     .fetch_one(&self.pool)
                     .await?
             }
