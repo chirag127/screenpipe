@@ -135,6 +135,11 @@ export default function EngineStartup({
   const [summaryText, setSummaryText] = useState("");
   const [summaryStreaming, setSummaryStreaming] = useState(false);
   const [summaryComplete, setSummaryComplete] = useState(false);
+  // Set when the summary stream fails for a non-abort reason (network
+  // unreachable, DLP block, HTTP error). Surfaces an inline note and releases
+  // the continue button immediately instead of leaving corp-network users
+  // staring at the pulse until the fallback timer expires (#4870).
+  const [summaryError, setSummaryError] = useState(false);
   const summaryStartedRef = useRef(false);
   const summaryAbortRef = useRef<AbortController | null>(null);
 
@@ -544,6 +549,7 @@ export default function EngineStartup({
 
       const controller = new AbortController();
       summaryAbortRef.current = controller;
+      setSummaryError(false);
       setSummaryStreaming(true);
 
       const systemPrompt = `you are writing a friendly, warm 4-5 sentence note to a person who just started screenpipe. they are watching this on their onboarding screen. the goal is to make them feel SEEN — show that you noticed what they were doing in the last few minutes — without sounding like a surveillance log.
@@ -636,6 +642,19 @@ if the input is sparse, just describe what little you have warmly. don't apologi
         if ((err as any)?.name !== "AbortError") {
           console.warn("summary stream failed:", err);
           summaryStartedRef.current = false;
+          // Once we've exhausted retries (or hit a hard network/DLP failure
+          // where fetch throws a TypeError), surface an inline note and let
+          // the user continue now — don't leave them on the pulse until the
+          // fallback timer fires (#4870). A TypeError from fetch means the
+          // request never reached the server (offline, cert, or corp DLP
+          // intercepting localhost / the cloud endpoint).
+          if (
+            err instanceof TypeError ||
+            summaryAttemptsRef.current >= MAX_SUMMARY_ATTEMPTS
+          ) {
+            setSummaryError(true);
+            setCanContinue(true);
+          }
         }
       } finally {
         setSummaryStreaming(false);
@@ -1001,6 +1020,16 @@ if the input is sparse, just describe what little you have warmly. don't apologi
               <span className="block text-xs text-muted-foreground/60 mt-2 text-center w-full">
                 auth still initializing — if this persists, quit and relaunch
                 screenpipe
+              </span>
+            )}
+            {/* Network/DLP failure: the summary model was unreachable. Say so
+                plainly (corp networks / DLP often block the request) and make
+                clear recording is fine and they can continue (#4870). */}
+            {summaryError && (
+              <span className="block text-xs text-muted-foreground/60 mt-2 text-center w-full">
+                couldn&apos;t reach the ai model to summarize — your network or
+                security software may be blocking it. recording is still
+                running; you can continue.
               </span>
             )}
           </div>
