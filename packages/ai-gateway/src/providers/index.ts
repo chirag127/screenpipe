@@ -9,6 +9,7 @@ import { GeminiProvider } from './gemini';
 import { VertexMaasProvider, isVertexMaasModel } from './vertex-maas';
 import { TinfoilProvider, isTinfoilModel } from './tinfoil';
 import { ScreenpipeEnclaveProvider, isScreenpipeEnclaveModel } from './screenpipe-enclave';
+import { GroqProvider, isGroqModel } from './groq';
 import { AIProvider } from './base';
 import { Env } from '../types';
 import { GOOGLE_POLICY_BLOCKED_MODEL_MESSAGE, isGooglePolicyBlockedModel } from '../utils/model-policy';
@@ -144,6 +145,10 @@ export function createProvider(model: string, env: Env): AIProvider {
 			? env.SCREENPIPE_ENCLAVE_API_KEY
 			: env.TINFOIL_API_KEY;
 		return new ScreenpipeEnclaveProvider(requireSecret(key, 'No Tinfoil API key configured (need SCREENPIPE_ENCLAVE_API_KEY or TINFOIL_API_KEY)'));
+	}
+	// PERSONAL-FORK (#4882): Groq — OpenAI-compatible, `groq/`-prefixed model ids.
+	if (isGroqModel(model)) {
+		return new GroqProvider(requireSecret(env.GROQ_API_KEY, 'Groq API key not configured'));
 	}
 	return new OpenAIProvider(requireSecret(env.OPENAI_API_KEY, 'OpenAI API key not configured'));
 }

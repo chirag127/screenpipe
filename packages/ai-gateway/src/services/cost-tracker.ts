@@ -322,6 +322,7 @@ export async function logCost(env: Env, entry: CostLogEntry): Promise<void> {
 export function inferProvider(model: string | null | undefined): string {
   if (typeof model !== 'string' || model.length === 0) return 'unknown';
   const lower = model.toLowerCase();
+  if (lower.startsWith('groq/')) return 'groq';
   if (lower.includes('claude')) return 'anthropic';
   if (lower.includes('gpt') || lower.includes('o1') || lower.includes('o3') || lower.includes('o4')) return 'openai';
   if (lower.includes('gemini')) return 'google';

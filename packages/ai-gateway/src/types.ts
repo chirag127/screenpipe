@@ -180,6 +180,8 @@ export interface Env {
 	AUTO_RELOAD_SECRET: string;
 	// OpenRouter (Llama, Qwen, Mistral via single API)
 	OPENROUTER_API_KEY: string;
+	// PERSONAL-FORK (#4882): Groq — fast OpenAI-compatible open-model inference
+	GROQ_API_KEY?: string;
 	// Tinfoil — confidential inference in secure enclaves
 	TINFOIL_API_KEY: string;
 	// Screenpipe's own Tinfoil-hosted enclave (privacy-filter + Gemma 4 E4B
