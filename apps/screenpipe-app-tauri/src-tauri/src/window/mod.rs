@@ -110,6 +110,9 @@ pub use focus::clear_frontmost_app;
 pub use focus::restore_frontmost_app;
 #[cfg(target_os = "macos")]
 pub use panel::{reset_to_regular_and_refresh_tray, MAIN_PANEL_SHOWN};
+// PERSONAL-FORK: overlay pin flag — unconditional (used on all platforms by
+// the focus-loss guards and the toggle command).
+pub use panel::MAIN_PANEL_PINNED;
 #[cfg(target_os = "macos")]
 pub use util::run_on_main_thread_safe;
 #[cfg(target_os = "macos")]

@@ -704,6 +704,9 @@ async getOnboardingStatus() : Promise<Result<OnboardingStore, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getOverlayPin() : Promise<boolean> {
+    return await TAURI_INVOKE("get_overlay_pin");
+},
 /**
  * Hydrate the frontend banner state on mount. The `update-available` event
  * is broadcast once when the download completes — if the React app isn't
@@ -2272,6 +2275,9 @@ async triggerUpdateCheck() : Promise<Result<boolean, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async toggleOverlayPin() : Promise<boolean> {
+    return await TAURI_INVOKE("toggle_overlay_pin");
 },
 /**
  * Unregister window-specific shortcuts when main window is hidden.

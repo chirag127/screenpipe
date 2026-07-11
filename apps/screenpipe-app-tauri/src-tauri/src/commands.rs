@@ -116,6 +116,27 @@ pub fn is_enterprise_build_cmd(app_handle: tauri::AppHandle) -> bool {
     is_enterprise_build(&app_handle)
 }
 
+/// PERSONAL-FORK: toggle the main overlay "pin" state. When pinned, the
+/// overlay's focus-loss auto-hide is suppressed (it stays visible when the
+/// user clicks away) and the TS timeline skips its `window-focused: true`
+/// state reset. Returns the new pinned state so the UI can reflect it.
+#[tauri::command]
+#[specta::specta]
+pub fn toggle_overlay_pin() -> bool {
+    use std::sync::atomic::Ordering;
+    let pinned = &crate::window::MAIN_PANEL_PINNED;
+    // fetch_xor(true) flips the flag and returns the PREVIOUS value, so the
+    // new state is its negation.
+    !pinned.fetch_xor(true, Ordering::SeqCst)
+}
+
+/// PERSONAL-FORK: read the current main-overlay pin state without changing it.
+#[tauri::command]
+#[specta::specta]
+pub fn get_overlay_pin() -> bool {
+    crate::window::MAIN_PANEL_PINNED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Return the macOS bundle identifier of the running app
 /// (e.g. `screenpi.pe`, `screenpi.pe.beta`, `screenpi.pe.dev`,
 /// `screenpi.pe.enterprise`). The onboarding stuck-screen surfaces this so

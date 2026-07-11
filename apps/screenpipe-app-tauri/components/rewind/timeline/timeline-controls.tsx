@@ -5,7 +5,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, ChevronDown, RefreshCw, CalendarIcon, Search, Play, Pause, Loader2, Mic, Volume2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, RefreshCw, CalendarIcon, Search, Play, Pause, Loader2, Mic, Volume2, Pin, PinOff } from "lucide-react";
 import {
 	format,
 	isAfter,
@@ -15,6 +15,7 @@ import {
 } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useEffect, useMemo, useState } from "react";
+import { commands } from "@/lib/utils/tauri";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import { useSettings } from "@/lib/hooks/use-settings";
 import { Calendar } from "@/components/ui/calendar";
@@ -78,6 +79,28 @@ export function TimelineControls({
 	const { isMac } = usePlatform();
 	const { settings } = useSettings();
 	const [calendarOpen, setCalendarOpen] = useState(false);
+
+	// PERSONAL-FORK: overlay pin state. When pinned, the Rust side suppresses
+	// the focus-loss auto-hide so the overlay stays open when clicking away.
+	// Self-contained: reads the current state on mount and toggles via command.
+	const [pinned, setPinned] = useState(false);
+	useEffect(() => {
+		let cancelled = false;
+		commands.getOverlayPin().then((v) => {
+			if (!cancelled) setPinned(v);
+		}).catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+	const togglePin = async () => {
+		try {
+			const next = await commands.toggleOverlayPin();
+			setPinned(next);
+		} catch {
+			// command unavailable (older binary) — ignore
+		}
+	};
 
 	// Set of "YYYY-MM-DD" local-day strings that have at least one frame.
 	// Used to grey out empty days in the calendar picker so users don't
@@ -233,6 +256,22 @@ export function TimelineControls({
 						title="Jump to now"
 					>
 						<RefreshCw className="h-4 w-4" />
+					</Button>
+
+					{/* PERSONAL-FORK: pin toggle — keeps the overlay open on focus loss */}
+					<Button
+						variant="ghost"
+						size="icon"
+						onClick={togglePin}
+						className={cn(
+							"h-8 w-8 transition-colors duration-150",
+							pinned
+								? "bg-foreground text-background hover:bg-foreground/90"
+								: "text-foreground hover:bg-foreground hover:text-background",
+						)}
+						title={pinned ? "Unpin overlay (auto-hide on focus loss)" : "Pin overlay (stay open when clicking away)"}
+					>
+						{pinned ? <Pin className="h-4 w-4" /> : <PinOff className="h-4 w-4" />}
 					</Button>
 				</div>
 

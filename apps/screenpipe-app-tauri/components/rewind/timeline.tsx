@@ -387,8 +387,12 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 				// Debounce: ignore duplicate focus events within 500ms
 				// macOS fires multiple focus events rapidly (3 in 62ms observed)
 				if (debounceTimer) clearTimeout(debounceTimer);
-				debounceTimer = setTimeout(() => {
+				debounceTimer = setTimeout(async () => {
 					debounceTimer = null;
+
+					// PERSONAL-FORK: when the overlay is pinned the user asked it to
+					// stay put — skip the position/filter/date reset entirely.
+					if (await commands.getOverlayPin().catch(() => false)) return;
 
 					// Don't reset if a search/calendar navigation is in progress —
 					// onWindowFocus resets currentDate to today, which cancels the

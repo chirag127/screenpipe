@@ -64,6 +64,15 @@ pub(crate) unsafe fn show_panel_visible(
 pub static MAIN_PANEL_SHOWN: Lazy<std::sync::atomic::AtomicBool> =
     Lazy::new(|| std::sync::atomic::AtomicBool::new(false));
 
+/// PERSONAL-FORK: when `true`, the main overlay panel is "pinned" and its
+/// focus-loss auto-hide is suppressed (the panel stays visible when the user
+/// clicks away). Toggled by the `toggle_overlay_pin` command; read by the
+/// focus-loss handlers in `show.rs`. Unconditional (not macOS-gated) so the
+/// guard and command compile on every platform. Defaults to unpinned, so
+/// behaviour is unchanged unless the user explicitly pins the overlay.
+pub static MAIN_PANEL_PINNED: Lazy<std::sync::atomic::AtomicBool> =
+    Lazy::new(|| std::sync::atomic::AtomicBool::new(false));
+
 /// Tracks which overlay mode the current Main window was created for.
 /// When the mode changes, show() hides the old panel and creates a fresh one
 /// under a different label to avoid NSPanel reconfiguration crashes.

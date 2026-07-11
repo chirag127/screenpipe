@@ -848,6 +848,13 @@ impl ShowRewindWindow {
                         match event {
                             tauri::WindowEvent::Focused(is_focused) => {
                                 if !is_focused {
+                                    // PERSONAL-FORK: pinned overlay stays visible
+                                    // on focus loss — skip the auto-hide entirely.
+                                    if crate::window::MAIN_PANEL_PINNED
+                                        .load(std::sync::atomic::Ordering::SeqCst)
+                                    {
+                                        return;
+                                    }
                                     // Synchronous alpha=0 — no order_out (which
                                     // causes focus-fight loops when restored).
                                     #[cfg(target_os = "macos")]
@@ -1248,6 +1255,13 @@ impl ShowRewindWindow {
                         #[cfg(not(target_os = "linux"))]
                         tauri::WindowEvent::Focused(is_focused) => {
                             if !is_focused {
+                                // PERSONAL-FORK: pinned overlay stays visible on
+                                // focus loss — skip the debounced auto-hide.
+                                if crate::window::MAIN_PANEL_PINNED
+                                    .load(std::sync::atomic::Ordering::SeqCst)
+                                {
+                                    return;
+                                }
                                 info!("Main window lost focus, scheduling hide (300ms debounce)");
                                 // Synchronous alpha=0 — panel stays in window list
                                 // but is invisible. No order_out (causes focus loops).
