@@ -568,7 +568,14 @@ async fn auto_name_input_speaker(db: Arc<screenpipe_db::DatabaseManager>, user_n
     // Wait a bit for initial audio to accumulate
     tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
 
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(120));
+    // Poll interval overridable via SCREENPIPE_CALENDAR_INTERVAL_SECS
+    // (default 120s) so low-power devices can slow the speaker sweep.
+    let interval_secs = std::env::var("SCREENPIPE_CALENDAR_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(120);
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
     let min_transcriptions = 10; // need enough data to be confident
 
     loop {

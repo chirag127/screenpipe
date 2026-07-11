@@ -806,7 +806,16 @@ fn spawn_archive_loop(
         // Short initial delay, then run immediately
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        // Interval overridable via SCREENPIPE_ARCHIVE_INTERVAL_SECS (default
+        // 300s). Lets low-power / metered devices back the cloud sweep off
+        // without a rebuild.
+        let interval_secs = std::env::var("SCREENPIPE_ARCHIVE_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(300);
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(interval_secs));
         interval.tick().await; // consume immediate tick
 
         let mut quota_backoff = QuotaBackoff::new();

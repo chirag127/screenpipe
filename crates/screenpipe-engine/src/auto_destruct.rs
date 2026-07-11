@@ -41,6 +41,15 @@ fn is_process_alive(pid: u32) -> bool {
 pub async fn watch_pid(pid: u32) -> bool {
     info!("starting to watch for app termination (pid: {})", pid);
 
+    // Poll interval overridable via SCREENPIPE_AUTODESTRUCT_INTERVAL_SECS
+    // (default 5s). Raising it cuts battery wake-ups on laptops that don't
+    // need sub-5s teardown latency.
+    let poll_secs = std::env::var("SCREENPIPE_AUTODESTRUCT_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(5);
+
     loop {
         #[cfg(target_os = "windows")]
         {
@@ -66,6 +75,6 @@ pub async fn watch_pid(pid: u32) -> bool {
             }
         }
 
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(poll_secs)).await;
     }
 }

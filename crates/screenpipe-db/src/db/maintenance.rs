@@ -1376,12 +1376,18 @@ impl DatabaseManager {
         tokio::spawn(async move {
             // 60s (not 300s): with inline auto-checkpoint off, the WAL grows for
             // the whole interval between ticks, so check more often to keep it
-            // small under sustained write load.
-            const INTERVAL: Duration = Duration::from_secs(60);
+            // small under sustained write load. Overridable via
+            // SCREENPIPE_WAL_INTERVAL_SECS for tuning on unusual workloads.
+            let interval_secs = std::env::var("SCREENPIPE_WAL_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|&v| v > 0)
+                .unwrap_or(60);
+            let interval_dur = Duration::from_secs(interval_secs);
             // ~40k pages * 4KB ≈ 160MB. Above this we force the checkpoint
             // through rather than tolerate more growth.
             const WAL_HARD_CAP_PAGES: i32 = 40_000;
-            let mut interval = tokio::time::interval(INTERVAL);
+            let mut interval = tokio::time::interval(interval_dur);
             loop {
                 tokio::select! {
                     _ = interval.tick() => {}
