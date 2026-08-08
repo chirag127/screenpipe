@@ -122,6 +122,36 @@ struct MeetingEventData {
 type RecordingHandlesMap = DashMap<AudioDevice, Arc<Mutex<JoinHandle<Result<()>>>>>;
 const MEETING_AUDIO_FRAME_BUFFER: usize = 512;
 const RECONCILIATION_IDLE_INTERVAL: Duration = Duration::from_secs(120);
+
+/// Attempts to land an `audio_chunks` row before falling back to a durable
+/// recovery marker.
+const CHUNK_INSERT_ATTEMPTS: u32 = 4;
+/// Base delay for [`chunk_insert_backoff`].
+const CHUNK_INSERT_BACKOFF_BASE: Duration = Duration::from_millis(400);
+/// Ceiling for [`chunk_insert_backoff`], so a stalled write never holds this
+/// audio task long enough to back up the capture pipeline behind it.
+const CHUNK_INSERT_BACKOFF_MAX: Duration = Duration::from_millis(4_000);
+
+/// Exponential backoff with full jitter for the audio-chunk insert retry.
+///
+/// The write queue fails a whole batch at once — up to `MAX_BATCH_SIZE` (500)
+/// queued writes get the same error from one `send_error_to_all`. With the old
+/// fixed 500/1000ms delay, every caller in that batch slept for exactly the
+/// same time, resubmitted together, landed in the *same* next batch, and failed
+/// together again. The retry was a lockstep thundering herd against the very
+/// contention it was trying to wait out.
+///
+/// Full jitter (`rand(0..=backoff)`, per AWS's "Exponential Backoff And
+/// Jitter") spreads that herd across the window instead, so some writers land
+/// in a later, smaller batch and succeed. Capped so a wedged write path degrades
+/// into the durable marker path quickly rather than stalling this task.
+fn chunk_insert_backoff(attempt: u32) -> Duration {
+    let exponential = CHUNK_INSERT_BACKOFF_BASE
+        .saturating_mul(1u32 << attempt.min(5))
+        .min(CHUNK_INSERT_BACKOFF_MAX);
+    // `gen_range` needs a non-empty range; the base is never zero.
+    Duration::from_millis(rand::random_range(1..=exponential.as_millis() as u64))
+}
 const MAX_IMMEDIATE_RECONCILIATION_SWEEPS: usize = 4;
 
 fn meetings_only_capture_waiting(
@@ -586,6 +616,26 @@ impl AudioManager {
                                 info!("reconciliation: transcribed {} orphaned chunks", count);
                             }
                             return sweep.hit_candidate_limit;
+                        }
+                        drop(engine_guard);
+
+                        // No transcription engine — but orphaned chunks still
+                        // need their `audio_chunks` row back, or they stay
+                        // invisible to the timeline and to search forever.
+                        // `reconcile_untranscribed` already drains markers
+                        // before its own transcription-disabled early return;
+                        // this gate above it defeated that, so markers piled up
+                        // to the 10k cap and were then dropped. Draining does
+                        // not transcribe anything, so it is safe here.
+                        if let Some(dir) = output_path_bg.as_deref() {
+                            let recovered =
+                                super::reconciliation::drain_pending_chunk_markers(&db, dir).await;
+                            if recovered > 0 {
+                                info!(
+                                    "reconciliation: recovered {} orphaned audio chunk(s) without a transcription engine",
+                                    recovered
+                                );
+                            }
                         }
                         false
                     })
@@ -1432,12 +1482,12 @@ impl AudioManager {
                             // Without this, audio files are written to disk but orphaned from the DB,
                             // causing silent data loss on the timeline.
                             let mut inserted = false;
-                            // Keep the last failure so the final error log can name
+                            // Keep the last failure so the final log can name
                             // the actual cause. Without it every distinct DB failure
                             // (pool timeout vs stuck transaction vs cantopen) collapses
                             // into one undiagnosable Sentry issue.
                             let mut last_err: Option<String> = None;
-                            for retry in 0..3u32 {
+                            for retry in 0..CHUNK_INSERT_ATTEMPTS {
                                 match db.insert_audio_chunk(&path, capture_dt).await {
                                     Ok(_) => {
                                         inserted = true;
@@ -1445,31 +1495,19 @@ impl AudioManager {
                                     }
                                     Err(e) => {
                                         warn!(
-                                            "failed to insert audio chunk into db (attempt {}/3): {:?}",
+                                            "failed to insert audio chunk into db (attempt {}/{}): {:?}",
                                             retry + 1,
+                                            CHUNK_INSERT_ATTEMPTS,
                                             e
                                         );
                                         last_err = Some(format!("{:?}", e));
-                                        if retry < 2 {
-                                            tokio::time::sleep(std::time::Duration::from_millis(
-                                                500 * (retry as u64 + 1),
-                                            ))
-                                            .await;
+                                        if retry + 1 < CHUNK_INSERT_ATTEMPTS {
+                                            tokio::time::sleep(chunk_insert_backoff(retry)).await;
                                         }
                                     }
                                 }
                             }
                             if !inserted {
-                                // path is a structured field so Sentry dedups the
-                                // issue across different devices; otherwise every
-                                // device name creates a new Sentry issue. error is a
-                                // separate field so the underlying cause is filterable
-                                // within that one issue rather than lost.
-                                error!(
-                                    audio_chunk_path = %path,
-                                    error = last_err.as_deref().unwrap_or("unknown"),
-                                    "audio chunk DB insert failed after 3 retries, data may be missing from timeline"
-                                );
                                 // Durable recovery: the audio file is on disk but
                                 // has no audio_chunks row, so it is invisible to the
                                 // timeline and the reconciliation candidate query
@@ -1477,12 +1515,40 @@ impl AudioManager {
                                 // (off the hot path) so the reconciliation sweep
                                 // re-inserts the row once the write pool recovers.
                                 // See SCREENPIPE-CLI-RC.
-                                super::reconciliation::persist_orphaned_chunk(
+                                let queued = super::reconciliation::persist_orphaned_chunk(
                                     out,
                                     path.clone(),
                                     capture_dt,
                                 )
                                 .await;
+
+                                // Report what actually happened to the user's
+                                // audio. A queued chunk is recovered by the next
+                                // sweep — nothing is lost — so it must not page
+                                // as an error; that is what made CLI-RC 50 users
+                                // of "data may be missing" with no way to tell
+                                // whether any data actually went missing. Only a
+                                // chunk we could not even queue is real loss.
+                                //
+                                // The filename (not the absolute path) is the
+                                // structured field so Sentry still dedups across
+                                // devices without shipping the user's home
+                                // directory in the event context.
+                                if queued {
+                                    warn!(
+                                        audio_chunk = %super::reconciliation::redact_home(&path),
+                                        error = last_err.as_deref().unwrap_or("unknown"),
+                                        "audio chunk DB insert failed after {} attempts; queued for reconciliation recovery",
+                                        CHUNK_INSERT_ATTEMPTS
+                                    );
+                                } else {
+                                    error!(
+                                        audio_chunk = %super::reconciliation::redact_home(&path),
+                                        error = last_err.as_deref().unwrap_or("unknown"),
+                                        "audio chunk DB insert failed after {} attempts AND could not be queued for recovery — this audio is missing from the timeline",
+                                        CHUNK_INSERT_ATTEMPTS
+                                    );
+                                }
                             }
                             Some(path)
                         }
@@ -2944,6 +3010,57 @@ mod tests {
         assert!(
             !is_drm_blocked,
             "after DRM clears, device should not be blocked"
+        );
+    }
+
+    /// SCREENPIPE-CLI-RC: the write queue fails a whole batch at once, so every
+    /// caller in that batch used to sleep for exactly the same fixed delay,
+    /// resubmit together, land in the same next batch, and fail together again.
+    /// The retry was a lockstep herd against the contention it was waiting out.
+    /// Full jitter has to actually spread them.
+    #[test]
+    fn chunk_insert_backoff_is_jittered_and_bounded() {
+        // Same attempt, many callers: the delays must not collapse onto one
+        // value, or the herd re-forms.
+        let attempt_1: std::collections::HashSet<u128> = (0..200)
+            .map(|_| chunk_insert_backoff(1).as_millis())
+            .collect();
+        assert!(
+            attempt_1.len() > 20,
+            "delays must be spread across the window, got {} distinct values",
+            attempt_1.len()
+        );
+
+        // Every delay stays inside the window for its attempt, and inside the
+        // ceiling, so a stalled write degrades to the durable marker path
+        // instead of stalling this audio task.
+        for attempt in 0..CHUNK_INSERT_ATTEMPTS {
+            let ceiling = CHUNK_INSERT_BACKOFF_BASE
+                .saturating_mul(1u32 << attempt.min(5))
+                .min(CHUNK_INSERT_BACKOFF_MAX);
+            for _ in 0..200 {
+                let delay = chunk_insert_backoff(attempt);
+                assert!(delay > Duration::ZERO, "a zero delay would busy-retry");
+                assert!(
+                    delay <= ceiling,
+                    "attempt {attempt}: {delay:?} exceeded its window {ceiling:?}"
+                );
+                assert!(delay <= CHUNK_INSERT_BACKOFF_MAX);
+            }
+        }
+
+        // The window still grows, so later attempts wait longer on average.
+        let mean = |attempt| {
+            (0..400)
+                .map(|_| chunk_insert_backoff(attempt).as_millis())
+                .sum::<u128>()
+                / 400
+        };
+        assert!(
+            mean(2) > mean(0),
+            "backoff must still grow across attempts (mean {} vs {})",
+            mean(2),
+            mean(0)
         );
     }
 }
