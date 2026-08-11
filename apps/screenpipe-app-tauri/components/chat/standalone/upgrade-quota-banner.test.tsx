@@ -147,7 +147,7 @@ describe("UpgradeQuotaBanner", () => {
     render(<UpgradeQuotaBanner />);
 
     expect(screen.getByTestId("hosted-ai-allowance-banner")).toBeTruthy();
-    expect(screen.getByText("Weekly hosted AI limit reached")).toBeTruthy();
+    expect(screen.getByText("Weekly AI limit reached")).toBeTruthy();
     expect(screen.getByText(/100% used this week/i)).toBeTruthy();
     expect(screen.getByText(/resets Aug 17, 5:00 PM/i)).toBeTruthy();
     expect(screen.getByText(/Switch to Auto or upgrade/i)).toBeTruthy();
@@ -156,6 +156,50 @@ describe("UpgradeQuotaBanner", () => {
     expect(
       screen.getByRole("button", { name: "Upgrade to Business Ultra" }),
     ).toBeTruthy();
+  });
+
+  it("presents frontier exhaustion without claiming the total weekly limit is spent", () => {
+    mocks.usageState = {
+      ...mocks.usageState,
+      tier: "business_max",
+      remaining: 999_999,
+      cost_limit_reached: false,
+      hosted_ai: {
+        plan: "business_max",
+        allowance_managed_by: "cloudflare",
+        usage_as_of: "2026-08-04T16:30:00.000Z",
+        upgrade: {
+          requiredPlan: "business_ultra",
+          upgradeUrl:
+            "https://screenpipe.com/account/billing?target_plan=pro_ultra&interval=month",
+          resetsAt: null,
+        },
+        allowances: [
+          {
+            lane: "combined",
+            used_percent: 50,
+            remaining_percent: 50,
+            window_seconds: 604_800,
+            technique: "fixed",
+            resets_at: "2026-08-17T00:00:00.000Z",
+          },
+          {
+            lane: "frontier",
+            used_percent: 100,
+            remaining_percent: 0,
+            window_seconds: 604_800,
+            technique: "fixed",
+            resets_at: "2026-08-17T00:00:00.000Z",
+          },
+        ],
+      },
+    };
+
+    render(<UpgradeQuotaBanner />);
+
+    expect(screen.getByText("Frontier model limit reached")).toBeTruthy();
+    expect(screen.queryByText("Weekly AI limit reached")).toBeNull();
+    expect(screen.getByText(/Switch to Auto or upgrade/i)).toBeTruthy();
   });
 
   it("does not promise an upgrade when the server offers no next plan", () => {
@@ -302,7 +346,7 @@ describe("UpgradeQuotaBanner", () => {
 
     render(<UpgradeQuotaBanner />);
     expect(screen.getByTestId("cost-limit-upgrade-banner")).toBeTruthy();
-    expect(screen.getByText(/hosted AI usage limit reached/i)).toBeTruthy();
+    expect(screen.getByText(/AI usage limit reached/i)).toBeTruthy();
     expect(
       screen.getByText(/resets 5:00 PM/i),
     ).toBeTruthy();

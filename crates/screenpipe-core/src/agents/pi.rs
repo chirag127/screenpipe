@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-pub const PI_PACKAGE: &str = "@earendil-works/pi-coding-agent@0.83.0";
-pub const PI_AI_PACKAGE: &str = "@earendil-works/pi-ai@0.83.0";
+pub const PI_PACKAGE: &str = "@earendil-works/pi-coding-agent@0.84.1";
+pub const PI_AI_PACKAGE: &str = "@earendil-works/pi-ai@0.84.1";
 pub const PI_NAMESPACE_DIR: &str = "@earendil-works";
 pub const SCREENPIPE_API_URL: &str = "https://api.screenpipe.com/v1";
 const PI_INSTALL_ARGS: [&str; 5] = [
@@ -4609,7 +4609,7 @@ mod tests {
         assert_eq!(parse_rate_limit_reset_secs("model not found"), None);
 
         // hosted_ai_capacity_reserved uses "retry_after_seconds", not "reset_in".
-        let capacity_reserved = r#"429 {"error":"hosted_ai_capacity_reserved","message":"Other hosted AI chats are still running. Wait for one to finish, then retry.","retry_after_seconds":5}"#;
+        let capacity_reserved = r#"429 {"error":"hosted_ai_capacity_reserved","message":"Other AI chats are still running. Wait for one to finish, then retry.","retry_after_seconds":5}"#;
         assert_eq!(parse_rate_limit_reset_secs(capacity_reserved), Some(5));
     }
 
@@ -4853,7 +4853,7 @@ mod tests {
     #[test]
     fn test_next_rate_limit_retry_capacity_reserved_outlasts_fixed_retry_cap() {
         // Real gateway payload for contention on the shared hosted-AI slot.
-        let stderr = r#"429 {"error":"hosted_ai_capacity_reserved","message":"Other hosted AI chats are still running. Wait for one to finish, then retry.","retry_after_seconds":5}"#;
+        let stderr = r#"429 {"error":"hosted_ai_capacity_reserved","message":"Other AI chats are still running. Wait for one to finish, then retry.","retry_after_seconds":5}"#;
 
         // Simulate holding capacity for 35s (7 retries at 5s each) — longer
         // than the fixed MAX_RATE_LIMIT_RETRIES=3 a generic rate limit gets.
@@ -4964,7 +4964,7 @@ mod tests {
     ) {
         // Simulate the shared hosted-AI slot staying busy for 4 attempts —
         // one more than MAX_RATE_LIMIT_RETRIES=3 — before it frees up.
-        let capacity_stderr = r#"429 {"error":"hosted_ai_capacity_reserved","message":"Other hosted AI chats are still running. Wait for one to finish, then retry.","retry_after_seconds":5}"#;
+        let capacity_stderr = r#"429 {"error":"hosted_ai_capacity_reserved","message":"Other AI chats are still running. Wait for one to finish, then retry.","retry_after_seconds":5}"#;
         let calls = std::cell::RefCell::new(0u32);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
