@@ -61,7 +61,7 @@ jobs:
           echo "$llvmBin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Import self-signed code-signing cert
-        if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+        if: "${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}"
         shell: pwsh
         env:
           WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
@@ -136,7 +136,7 @@ jobs:
         run: bun tauri build --target x86_64-pc-windows-msvc
 
       - name: Sign installer (Authenticode)
-        if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+        if: "${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}"
         shell: pwsh
         env:
           WINDOWS_CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
@@ -190,7 +190,7 @@ jobs:
           retention-days: 30
 
       - name: Publish to chirag127/releases
-        if: ${{ secrets.RELEASES_PAT != '' && steps.locate.outputs.installer_path != '' }}
+        if: "${{ secrets.RELEASES_PAT != '' && steps.locate.outputs.installer_path != '' }}"
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
