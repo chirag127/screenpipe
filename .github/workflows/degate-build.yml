@@ -74,7 +74,8 @@ jobs:
           [System.IO.File]::WriteAllBytes($pfxPath, [System.Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
           $secPwd = ConvertTo-SecureString $env:WINDOWS_CERT_PASSWORD -AsPlainText -Force
           Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $secPwd | Out-Null
-          Write-Host "Cert imported to CurrentUser\My"
+          Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\Root -Password $secPwd | Out-Null
+          Write-Host "Cert imported to CurrentUser\My + CurrentUser\Root"
           echo "CODESIGN_PFX=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Download ONNX Runtime (required by tauri resource glob)
@@ -160,7 +161,11 @@ jobs:
           foreach ($f in $installers) {
             Write-Host "Signing: $($f.FullName)"
             & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 $env:WINDOWS_CERT_THUMBPRINT $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with exit $LASTEXITCODE" }
+            # verify is best-effort: a self-signed cert will not chain to a public trusted root,
+            # which is expected for a personal-use build. Log the result, do not fail the build.
             & $signtool verify /pa $f.FullName
+            if ($LASTEXITCODE -ne 0) { Write-Host "note: /pa chain-verify non-zero (expected for self-signed personal build)" }
             Write-Host "Signed: $($f.Name)"
           }
 
