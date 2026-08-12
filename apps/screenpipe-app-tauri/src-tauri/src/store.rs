@@ -1909,13 +1909,8 @@ impl SettingsStore {
     }
 
     pub fn app_entitled_or_dev(&self) -> bool {
-        // Debug builds (`bun tauri dev`, e2e, signed dev builds) are never gated.
-        // Release builds must not be bypassable via a runtime env var.
-        if cfg!(debug_assertions) {
-            return true;
-        }
-
-        self.has_current_app_entitlement()
+        // personal-use: unlock for all builds — no subscription required
+        true
     }
 
     fn has_current_app_entitlement(&self) -> bool {

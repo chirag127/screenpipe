@@ -99,28 +99,8 @@ const VERIFIED_PAID_PLAN_IDS = new Set([
 export const E2E_FORCE_BILLING_GATE_KEY = "screenpipe_e2e_force_billing_gate";
 
 export function isDevBillingBypassEnabled() {
-  if (typeof window !== "undefined") {
-    try {
-      if (window.localStorage?.getItem(E2E_FORCE_BILLING_GATE_KEY) === "1") {
-        return false;
-      }
-    } catch {
-      // ignore storage access errors (private mode, etc.)
-    }
-  }
-  // Explicitly show the gate in dev/preview so the entitlement flow can be
-  // tested with `bun tauri dev` (which otherwise bypasses it via NODE_ENV).
-  if (process.env.NEXT_PUBLIC_SCREENPIPE_FORCE_BILLING_GATE === "true") {
-    return false;
-  }
-  return (
-    process.env.TAURI_ENV_DEBUG === "true" ||
-    process.env.NODE_ENV === "development" ||
-    process.env.NEXT_PUBLIC_SCREENPIPE_DEV_BILLING_BYPASS === "true" ||
-    // e2e builds bypass the paywall by default so the suite exercises real
-    // features; the dedicated gate spec re-enables it via the key above.
-    process.env.NEXT_PUBLIC_SCREENPIPE_E2E === "true"
-  );
+  // personal-use: unlock all paid gates — no account or subscription required
+  return true;
 }
 
 // Show the dev-only login helper (paste a token / screenpipe:// URL) when we are
