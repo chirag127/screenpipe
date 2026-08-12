@@ -18,6 +18,19 @@ a pointer.
 - skill `screenpipe-tauri` — before adding or changing Tauri commands or their
   TypeScript bindings.
 
+## Fork customizations (chirag127 personal-use fork)
+
+This is `chirag127/screenpipe`, personal-use de-gated fork.
+See `FORK-NOTES.md` for full context. Short summary:
+
+- Branch `personal-degate` holds all patches — keep them minimal + rebasable on upstream/main.
+- Three-file de-gate: `isDevBillingBypassEnabled` always true, `app_entitled_or_dev` always true, default LLM → kilo.ai keyless.
+- Build: `.github/workflows/degate-build.yml` — GH-hosted `windows-latest` + `ubuntu-latest`, self-signed Authenticode, optional publish to `chirag127/releases` via `RELEASES_PAT` secret.
+- Cert trust: run `Import-PfxCertificate` once per machine (see FORK-NOTES.md).
+- No PR to upstream. Source-available license, personal use only.
+
+---
+
 ## Every file you create or edit
 
 Header at the top, below any shebang or `use` line that must come first. `//`
