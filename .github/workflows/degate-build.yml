@@ -19,6 +19,9 @@ jobs:
     name: Windows x64 NSIS installer
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      HAS_CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+      HAS_RELEASES_PAT: ${{ secrets.RELEASES_PAT != '' }}
 
     steps:
       - name: Enable git long paths
@@ -61,7 +64,7 @@ jobs:
           echo "$llvmBin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Import self-signed code-signing cert
-        if: "${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}"
+        if: env.HAS_CERT == 'true'
         shell: pwsh
         env:
           WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
@@ -136,7 +139,7 @@ jobs:
         run: bun tauri build --target x86_64-pc-windows-msvc
 
       - name: Sign installer (Authenticode)
-        if: "${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}"
+        if: env.HAS_CERT == 'true'
         shell: pwsh
         env:
           WINDOWS_CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
@@ -190,24 +193,19 @@ jobs:
           retention-days: 30
 
       - name: Publish to chirag127/releases
-        if: "${{ secrets.RELEASES_PAT != '' && steps.locate.outputs.installer_path != '' }}"
+        if: env.HAS_RELEASES_PAT == 'true' && steps.locate.outputs.installer_path != ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           INSTALLER_PATH: ${{ steps.locate.outputs.installer_path }}
           INSTALLER_NAME: ${{ steps.locate.outputs.installer_name }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          $sha = "${{ github.sha }}".Substring(0, 7)
+          $sha = $env:COMMIT_SHA.Substring(0, 7)
           $date = (Get-Date -Format "yyyyMMdd")
           $tag = "win-$date-$sha"
           $title = "screenpipe (fork, unlocked) $tag"
-          $body = @"
-          Personal-use de-gated build from chirag127/screenpipe@personal-degate (${{ github.sha }}).
-          - No login or subscription required (isDevBillingBypassEnabled always true)
-          - Default LLM: kilo.ai keyless (kilo-auto/free)
-          - Self-signed Authenticode cert (trust per FORK-NOTES.md before installing)
-          - Private per license — do not redistribute
-          "@
+          $body = "Personal-use de-gated build from chirag127/screenpipe@personal-degate ($env:COMMIT_SHA). No login or subscription required. Keyless LLM: kilo.ai. Self-signed cert (trust per FORK-NOTES.md). Private per license - do not redistribute."
           gh release create $tag --repo chirag127/releases --title $title --notes $body --latest "$env:INSTALLER_PATH#$env:INSTALLER_NAME"
           Write-Host "Published: https://github.com/chirag127/releases/releases/tag/$tag"
 
