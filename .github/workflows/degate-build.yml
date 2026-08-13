@@ -106,6 +106,20 @@ jobs:
           key: windows-x64-degate-${{ hashFiles('apps/screenpipe-app-tauri/src-tauri/Cargo.lock') }}
           save-if: true
 
+      # sccache — compiler-output cache over GitHub Actions cache. Caches ALL
+      # compilation (workspace + deps), so unchanged crates are not recompiled
+      # between runs. This is the main lever that keeps the Rust build under the
+      # timeout ceiling on repeat runs.
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Enable sccache for Rust
+        shell: pwsh
+        run: |
+          "RUSTC_WRAPPER=sccache"     | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SCCACHE_GHA_ENABLED=true"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CARGO_INCREMENTAL=0"       | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Cache binary deps
         uses: actions/cache@v4
         with:
